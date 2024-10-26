@@ -1,0 +1,6 @@
+all:
+  hosts:
+    web_servers:
+      ansible_host: 13.55.19.7
+      ansible_user: ubuntu
+      ansible_ssh_private_key_file: ~/.ssh/lootlearn-server-dev-key.pem

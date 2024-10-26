@@ -1,0 +1,127 @@
+---
+- name: Install apt prerequisites
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - software-properties-common
+    state: present
+    update_cache: yes
+
+- name: Add Docker GPG apt Key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker apt repository
+  apt_repository:
+    repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+
+- name: Install Docker
+  apt:
+    name: docker-ce
+    state: present
+    update_cache: yes
+
+- name: Ensure Docker service is running
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Pull the media server Docker image
+  community.docker.docker_image:
+    name: vicdonxp/loot-learn-local
+    source: pull
+
+- name: Copy script to remote hosts
+  copy:
+    src: key_store_init.sh
+    dest: /tmp/key_store_init.sh
+    mode: '0755'
+- name: Create related directories
+  shell: |
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/management_console"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/management_api"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/portal"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/webrtc_agent"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/analytics_agent"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/currentapp"
+    
+- name: Copy SSL certificate to remote hosts
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0755'
+  loop:
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/management_console/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/management_api/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/portal/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/webrtc_agent/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/analytics_agent/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/currentapp/certificate.pfx' }
+
+- name: Run media server container with custom volumes
+  community.docker.docker_container:
+    name: media-server
+    image: vicdonxp/loot-learn-local
+    state: started
+    restart_policy: always
+    detach: yes  
+    tty: yes    
+    command: /bin/bash
+    volumes:
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/management_console/certificate.pfx:/home/owt/management_console/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/management_api/certificate.pfx:/home/owt/management_api/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/portal/certificate.pfx:/home/owt/portal/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/webrtc_agent/certificate.pfx:/home/owt/webrtc_agent/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/analytics_agent/certificate.pfx:/home/owt/analytics_agent/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/currentapp/certificate.pfx:/home/owt/apps/current_app/cert/certificate.pfx:ro
+    ports:
+      - 3004:3004
+
+- name: Copy script to container
+  community.docker.docker_container_copy_into:
+    container: media-server
+    path: /tmp/key_store_init.sh
+    container_path: /tmp/key_store_init.sh
+
+- name: Set timezone for non-interactive installation in Docker container
+  community.docker.docker_container_exec:
+    container: media-server
+    command: bash -c 'echo "tzdata tzdata/Areas select Etc" | debconf-set-selections && echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections'
+
+- name: Update apt cache inside Docker container
+  community.docker.docker_container_exec:
+    container: media-server
+    command: apt-get update
+
+- name: Install packages inside Docker container
+  community.docker.docker_container_exec:
+    container: media-server
+    command: apt install -y expect
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+- name: Execute script in the container
+  community.docker.docker_container_exec:
+    container: media-server  
+    cmd: |
+     bash /tmp/key_store_init.sh  2> /dev/null
+     sleep 10
+  loop:
+    - /home/owt/management_console
+    - /home/owt/management_api
+    - /home/owt/portal
+    - /home/owt/webrtc_agent
+    - /home/owt/analytics_agent
+    - /home/owt/apps/current_app
+  args:
+    chdir: "{{ item }}"
+
+- name: Start the Media server
+  community.docker.docker_container_exec:
+   container: media-server  
+   cmd: bash /home/owt/startowt.sh
