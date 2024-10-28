@@ -49,6 +49,7 @@
     mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/webrtc_agent"
     mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/analytics_agent"
     mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/currentapp"
+    mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/analytics_agent/store"
     
 - name: Copy SSL certificate to remote hosts
   copy:
@@ -62,6 +63,7 @@
     - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/webrtc_agent/certificate.pfx' }
     - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/analytics_agent/certificate.pfx' }
     - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/currentapp/certificate.pfx' }
+    - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/analytics_agent/store/.owt.keystore' }
 
 - name: Run media server container with custom volumes
   community.docker.docker_container:
@@ -79,6 +81,7 @@
      - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/webrtc_agent/certificate.pfx:/home/owt/webrtc_agent/cert/certificate.pfx:ro
      - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/analytics_agent/certificate.pfx:/home/owt/analytics_agent/cert/certificate.pfx:ro
      - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/currentapp/certificate.pfx:/home/owt/apps/current_app/cert/certificate.pfx:ro
+     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/analytics_agent/store/.owt.keystore:/home/owt/analytics_agent/cert/.owt.keystore:ro
     ports:
       - 3004:3004
 
@@ -108,9 +111,7 @@
 - name: Execute script in the container
   community.docker.docker_container_exec:
     container: media-server  
-    cmd: |
-     bash /tmp/key_store_init.sh  2> /dev/null
-     sleep 10
+    command: bash /tmp/key_store_init.sh 2> /dev/null
   loop:
     - /home/owt/management_console
     - /home/owt/management_api
@@ -120,6 +121,8 @@
     - /home/owt/apps/current_app
   args:
     chdir: "{{ item }}"
+    # Adding a delay to avoid rapid execution of each loop iteration
+  when: item is defined
 
 - name: Start the Media server
   community.docker.docker_container_exec:
