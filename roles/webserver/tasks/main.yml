@@ -33,14 +33,9 @@
 
 - name: Pull the media server Docker image
   community.docker.docker_image:
-    name: vicdonxp/loot-learn-local
+    name: vicdonxp/loot-learn-local-v1
     source: pull
 
-- name: Copy script to remote hosts
-  copy:
-    src: key_store_init.sh
-    dest: /tmp/key_store_init.sh
-    mode: '0755'
 - name: Create related directories
   shell: |
     mkdir -p "{{ XDG_CONFIG_HOME | default(ansible_env.HOME + '/.config') }}/owt/management_console"
@@ -65,66 +60,19 @@
     - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/currentapp/certificate.pfx' }
     - { src: 'certificate.pfx', dest: '{{ XDG_CONFIG_HOME | default(ansible_env.HOME + "/.config") }}/owt/analytics_agent/store/.owt.keystore' }
 
-- name: Run media server container with custom volumes
-  community.docker.docker_container:
-    name: media-server
-    image: vicdonxp/loot-learn-local
-    state: started
-    restart_policy: always
-    detach: yes  
-    tty: yes    
-    command: /bin/bash
-    volumes:
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/management_console/certificate.pfx:/home/owt/management_console/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/management_api/certificate.pfx:/home/owt/management_api/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/portal/certificate.pfx:/home/owt/portal/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/webrtc_agent/certificate.pfx:/home/owt/webrtc_agent/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/analytics_agent/certificate.pfx:/home/owt/analytics_agent/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/currentapp/certificate.pfx:/home/owt/apps/current_app/cert/certificate.pfx:ro
-     - ${XDG_CONFIG_HOME:-$HOME/.config}/owt/analytics_agent/store/.owt.keystore:/home/owt/analytics_agent/cert/.owt.keystore:ro
-    ports:
-      - 3004:3004
+- name: Copy a configured file
+  template:
+    src: templates/config.j2
+    dest: /tmp/docker-compose.yml
+  vars:
+    m_password: "{{ lookup('env', 'MONGO_INITDB_ROOT_PASSWORD') }}"
+    m_username: "{{ lookup('env', 'MONGO_INITDB_ROOT_USERNAME') }}"
 
-- name: Copy script to container
-  community.docker.docker_container_copy_into:
-    container: media-server
-    path: /tmp/key_store_init.sh
-    container_path: /tmp/key_store_init.sh
+- name: Run media server container
+  community.docker.docker_compose_v2:
+    project_src: /tmp
+  register: output
 
-- name: Set timezone for non-interactive installation in Docker container
-  community.docker.docker_container_exec:
-    container: media-server
-    command: bash -c 'echo "tzdata tzdata/Areas select Etc" | debconf-set-selections && echo "tzdata tzdata/Zones/Etc select UTC" | debconf-set-selections'
-
-- name: Update apt cache inside Docker container
-  community.docker.docker_container_exec:
-    container: media-server
-    command: apt-get update
-
-- name: Install packages inside Docker container
-  community.docker.docker_container_exec:
-    container: media-server
-    command: apt install -y expect
-    env:
-      DEBIAN_FRONTEND: noninteractive
-
-- name: Execute script in the container
-  community.docker.docker_container_exec:
-    container: media-server  
-    command: bash /tmp/key_store_init.sh 2> /dev/null
-  loop:
-    - /home/owt/management_console
-    - /home/owt/management_api
-    - /home/owt/portal
-    - /home/owt/webrtc_agent
-    - /home/owt/analytics_agent
-    - /home/owt/apps/current_app
-  args:
-    chdir: "{{ item }}"
-    # Adding a delay to avoid rapid execution of each loop iteration
-  when: item is defined
-
-- name: Start the Media server
-  community.docker.docker_container_exec:
-   container: media-server  
-   cmd: bash /home/owt/startowt.sh
+- name: Show results
+  ansible.builtin.debug:
+    var: output
